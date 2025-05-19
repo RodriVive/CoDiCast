@@ -114,23 +114,27 @@ def UpSample(width, interpolation="nearest"):
 
     return apply
 
-
 class TimeEmbedding(layers.Layer):
     """
-    one time point to embedding vector with dim. R^1--> R^dim
+    One time point to embedding vector with dim. R^1 --> R^dim
     """
     def __init__(self, dim, **kwargs):
         super().__init__(**kwargs)
         self.dim = dim
         self.half_dim = dim // 2
-        self.emb = math.log(10000) / (self.half_dim - 1)
-        self.emb = tf.exp(tf.range(self.half_dim, dtype=tf.float32) * -self.emb)
+        self.emb_scale = math.log(10000) / (self.half_dim - 1)
 
     def call(self, inputs):
-        inputs = tf.cast(inputs, dtype=tf.float32)
-        emb = inputs[:, None] * self.emb[None, :]
-        emb = tf.concat([tf.sin(emb), tf.cos(emb)], axis=-1)
+        inputs = tf.cast(inputs, dtype=tf.float32)  # shape: (batch,)
+        inputs = tf.reshape(inputs, [-1, 1])         # shape: (batch, 1)
+
+        # Compute freqs on the fly to avoid JIT/XLA issues
+        freqs = tf.exp(
+            tf.range(self.half_dim, dtype=tf.float32) * -self.emb_scale
+        )  # shape: (half_dim,)
         
+        args = inputs * freqs[None, :]  # shape: (batch, half_dim)
+        emb = tf.concat([tf.sin(args), tf.cos(args)], axis=-1)  # shape: (batch, dim)
         return emb
 
 
@@ -191,7 +195,7 @@ def build_unet_model_c2(img_size_H,
                                     )(image_input_past)
     print("image_input_past shape:", image_input_past.shape)
     
-    image_input_past_embed = layers.Reshape((32*64, first_conv_channels))(image_input_past)
+    image_input_past_embed = layers.Reshape((96*144, first_conv_channels))(image_input_past)
     print("image_input_past shape:", image_input_past_embed.shape)
 
 
@@ -202,7 +206,7 @@ def build_unet_model_c2(img_size_H,
                                       padding="same",
                                       kernel_initializer=kernel_init(1.0),
                                      )(image_input)
-    image_input_embed = layers.Reshape((32*64, first_conv_channels))(image_input_embed)
+    image_input_embed = layers.Reshape((96*144, first_conv_channels))(image_input_embed)
 
     # ================= cross_attention =================
     cross_atte = layers.MultiHeadAttention(num_heads=1, key_dim=256)(image_input_past_embed, image_input_embed)
@@ -210,7 +214,7 @@ def build_unet_model_c2(img_size_H,
     
     x = layers.Add()([image_input_embed, image_input_past_embed])
     x = layers.Add()([x, cross_atte])
-    x = layers.Reshape((32, 64, first_conv_channels))(x)
+    x = layers.Reshape((96, 144, first_conv_channels))(x)
     
     # time_embedding
     temb = TimeEmbedding(dim=first_conv_channels * 4)(time_input)
@@ -623,7 +627,7 @@ def build_unet_model_c2_no_encoder(img_size_H,
                                     )(image_input_past)
     print("image_input_past shape:", image_input_past.shape)
     
-    image_input_past_embed = layers.Reshape((32*64, first_conv_channels))(image_input_past)
+    image_input_past_embed = layers.Reshape((96*144, first_conv_channels))(image_input_past)
     print("image_input_past shape:", image_input_past_embed.shape)
 
     
@@ -633,7 +637,7 @@ def build_unet_model_c2_no_encoder(img_size_H,
                                       padding="same",
                                       kernel_initializer=kernel_init(1.0),
                                      )(image_input)
-    image_input_embed = layers.Reshape((32*64, first_conv_channels))(image_input_embed)
+    image_input_embed = layers.Reshape((96*144, first_conv_channels))(image_input_embed)
 
     
     # ================= cross_attention =================

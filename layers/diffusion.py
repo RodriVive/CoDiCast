@@ -122,10 +122,13 @@ class GaussianDiffusion:
             Diffused samples at timestep `t` : noised sample. Eq. (4, 12) in paper
         """
         x_start_shape = tf.shape(x_start)
-        return (
-            self._extract(self.sqrt_alphas_cumprod, t, tf.shape(x_start)) * x_start
-            + self._extract(self.sqrt_one_minus_alphas_cumprod, t, x_start_shape) * noise
-        )
+        dtype = x_start.dtype  # ensure consistency
+
+        coeff1 = tf.cast(self._extract(self.sqrt_alphas_cumprod, t, x_start_shape), dtype)
+        coeff2 = tf.cast(self._extract(self.sqrt_one_minus_alphas_cumprod, t, x_start_shape), dtype)
+
+        return coeff1 * x_start + coeff2 * noise
+
 
     
     def predict_start_from_noise(self, x_t, t, noise):
