@@ -147,7 +147,6 @@ def TimeMLP(units, activation_fn=keras.activations.swish):
     return apply
 
 
-
 def build_unet_model_c2(img_size_H,
                      img_size_W,
                      img_channels,
@@ -168,7 +167,9 @@ def build_unet_model_c2(img_size_H,
     time_input = keras.Input(shape=(), dtype=tf.int64, name="time_input")
     image_input_past1 = layers.Input(shape=(img_size_H, img_size_W, img_channels), name="image_input_past1")
     image_input_past2 = layers.Input(shape=(img_size_H, img_size_W, img_channels), name="image_input_past2")
-
+    improve_past1 = layers.Input(shape=(64,), name="improve_past1")
+    improve_past2 = layers.Input(shape=(64,), name="improve_past2")
+    
     # ================= image past embedding =================
     image_input_past_embed1 = encoder(image_input_past1)
     image_input_past_embed1 = layers.Conv2D(first_conv_channels,
@@ -211,9 +212,16 @@ def build_unet_model_c2(img_size_H,
     # ================= cross_attention =================
     cross_atte = layers.MultiHeadAttention(num_heads=1, key_dim=256)(image_input_past_embed, image_input_embed)
     
+
+    improve_expand1 = layers.RepeatVector(img_size_H * img_size_W)(improve_past1)
+    improve_expand1 = layers.Reshape((img_size_H * img_size_W, 64))(improve_expand1)
+    improve_expand2 = layers.RepeatVector(img_size_H * img_size_W)(improve_past2)
+    improve_expand2 = layers.Reshape((img_size_H * img_size_W, 64))(improve_expand2)
     
     x = layers.Add()([image_input_embed, image_input_past_embed])
     x = layers.Add()([x, cross_atte])
+    x = layers.Add()([x, improve_expand1])
+    x = layers.Add()([x, improve_expand2])
     x = layers.Reshape((96, 144, first_conv_channels))(x)
     
     # time_embedding
@@ -258,7 +266,7 @@ def build_unet_model_c2(img_size_H,
     
     return keras.Model([image_input, time_input,
                         image_input_past1, image_input_past2, 
-                       ], x, name="unet")
+                        improve_past1, improve_past2], x, name="unet")
 
 
 

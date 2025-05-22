@@ -1,7 +1,8 @@
 import math
 import numpy as np
 import matplotlib.pyplot as plt
-
+from AE_ML.models.TRFM_AE import TransformerAutoencoder
+from AE_ML.util import load_checkpoint
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['XLA_FLAGS'] = '--xla_gpu_cuda_data_dir=/dev/null'
@@ -25,10 +26,10 @@ module_path = os.path.abspath(os.path.join('..'))
 if module_path not in sys.path:
     sys.path.append(module_path)
 
-from utils.dataset import get_dataloaders
-from utils.normalization import batch_norm
+from ..utils.dataset import get_dataloaders
+from ..utils.normalization import batch_norm
 
-from layers.diffusion import GaussianDiffusion
+from ..layers.diffusion import GaussianDiffusion
 
 from tensorflow.keras.models import load_model
 tf.config.optimizer.set_jit(False)
@@ -44,7 +45,7 @@ class DiffusionModel(keras.Model):
 
     def train_step(self, data):
         # Unpack the data
-        (images, image_input_past1, image_input_past2), y = data
+        (images, image_input_past1, image_input_past2), y, improve_past1, improve_past2 = data
         
         # 1. Get the batch size
         batch_size = tf.shape(images)[0]
@@ -62,7 +63,7 @@ class DiffusionModel(keras.Model):
             print("images_t.shape:", images_t.shape)
             
             # 5. Pass the diffused images and time steps to the network
-            pred_noise = self.network([images_t, t, image_input_past1, image_input_past2], training=True)
+            pred_noise = self.network([images_t, t, image_input_past1, image_input_past2, improve_past1, improve_past2], training=True)
             print("pred_noise.shape:", pred_noise.shape)
             
             # 6. Calculate the loss
@@ -84,7 +85,7 @@ class DiffusionModel(keras.Model):
     
     def test_step(self, data):
         # Unpack the data
-        (images, image_input_past1, image_input_past2), y = data
+        (images, image_input_past1, image_input_past2), y, improve_past1, improve_past2 = data
 
         # 1. Get the batch size
         batch_size = tf.shape(images)[0]
@@ -99,7 +100,7 @@ class DiffusionModel(keras.Model):
         images_t = self.gdf_util.q_sample(images, t, noise)
         
         # 5. Pass the diffused images and time steps to the network
-        pred_noise = self.network([images_t, t, image_input_past1, image_input_past2], training=False)
+        pred_noise = self.network([images_t, t, image_input_past1, image_input_past2, improve_past1, improve_past2], training=False)
         
         # 6. Calculate the loss
         loss = self.loss(noise, pred_noise)
@@ -108,10 +109,10 @@ class DiffusionModel(keras.Model):
         return {"loss": loss}
 
 
-batch_size = 64
-num_epochs = 800         # Just for the sake of demonstration
-total_timesteps = 1500   # 1000
-norm_groups = 8          # Number of groups used in GroupNormalization layer
+batch_size = 16
+num_epochs = 100
+total_timesteps = 120
+norm_groups = 8
 learning_rate = 1e-4
 
 img_size_H = 96
@@ -124,22 +125,30 @@ widths = [first_conv_channels * mult for mult in channel_multiplier]
 has_attention = [False, False, True, True]
 num_res_blocks = 2 
 
-train_dataset, val_dataset = get_dataloaders(batch_size=batch_size)
+train_dataset, val_dataset, improve_train, improve_val = get_dataloaders(batch_size=batch_size)
 
 print("Train shape:", train_dataset[0].shape)
 print("Val shape:", val_dataset[0].shape)
+
+print("Train improve shape:", improve_train.shape)
+print("Val improve shape:", improve_val.shape)
 
 train_data_tf_norm = batch_norm(train_dataset, train_dataset.shape, batch_size=batch_size)
 train_data_tf_norm_pred = train_data_tf_norm[2:]
 train_data_tf_norm_past1 = train_data_tf_norm[:-2]
 train_data_tf_norm_past2 = train_data_tf_norm[1:-1]
+improve_past1 = improve_train[:-2]
+improve_past2 = improve_train[1:-1]
+
 
 val_data_tf_norm = batch_norm(val_dataset, val_dataset.shape, batch_size=batch_size)
 val_data_tf_norm_pred = val_data_tf_norm[2:]
 val_data_tf_norm_past1 = val_data_tf_norm[:-2]
 val_data_tf_norm_past2 = val_data_tf_norm[1:-1]
+val_improve_past1 = improve_val[:-2]
+val_improve_past2 = improve_val[1:-1]
 
-pretrained_encoder = load_model('../saved_models/aod_encoder.keras')
+pretrained_encoder = load_model('./CoDiCast/saved_models/aod_encoder.keras')
 pretrained_encoder.summary()
 
 # Extract the first 5 layers
@@ -167,7 +176,7 @@ for layer in pretrained_encoder.layers:
 
 pretrained_encoder._name = 'encoder'
 
-from layers.denoiser import build_unet_model_c2
+from ..layers.denoiser import build_unet_model_c2
 
 network = build_unet_model_c2(
     img_size_H=img_size_H,
@@ -179,7 +188,7 @@ network = build_unet_model_c2(
     norm_groups=norm_groups,
     first_conv_channels=first_conv_channels,
     activation_fn=keras.activations.swish,
-    encoder=pretrained_encoder,
+    encoder=pretrained_encoder
 )
 
 ema_network = build_unet_model_c2(
@@ -192,23 +201,26 @@ ema_network = build_unet_model_c2(
     norm_groups=norm_groups,
     first_conv_channels=first_conv_channels,
     activation_fn=keras.activations.swish,
-    encoder=pretrained_encoder,
+    encoder=pretrained_encoder
 )
 ema_network.set_weights(network.get_weights())
-
+print(train_data_tf_norm_pred.shape)
+print(train_data_tf_norm_past1.shape)
+print(train_data_tf_norm_past2.shape)
+print(improve_train.shape)
 train_dataset = tf.data.Dataset.from_tensor_slices(((train_data_tf_norm_pred, 
                                                      train_data_tf_norm_past1, 
                                                      train_data_tf_norm_past2,
-                                                    ), train_data_tf_norm_pred))
+                                                    ), train_data_tf_norm_pred, improve_past1, improve_past2))
 train_dataset = train_dataset.shuffle(buffer_size=1024).batch(batch_size)
 
 val_dataset = tf.data.Dataset.from_tensor_slices(((val_data_tf_norm_pred, 
                                                    val_data_tf_norm_past1,
                                                    val_data_tf_norm_past2,
-                                                  ), val_data_tf_norm_pred))
+                                                  ), val_data_tf_norm_pred, val_improve_past1, val_improve_past2))
 val_dataset = val_dataset.shuffle(buffer_size=1024).batch(batch_size)
 
-from loss.loss import lat_weighted_loss_mse_56deg
+from ..loss.loss import lat_weighted_loss_mse_56deg
 
 learning_rate = 2e-4
 decay_steps = 10000

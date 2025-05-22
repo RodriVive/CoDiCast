@@ -28,33 +28,15 @@ class CustomDataset(tf.keras.utils.Sequence):
 
 
 def load_IMPROVE():
-    file = "../../data/improve_monthly_gridded.nc"
-    ds = xr.open_dataset(file)
-    df = ds.to_dataframe().reset_index()
-    print(df.head(), df.columns)
-
-    feature_vars = [v for v in ds.data_vars if all(dim in ds[v].dims for dim in ['lat_bin', 'lon_bin'])]
-    print(f"Loading features: {feature_vars}")
-
-    feature_arrays = []
-    for var in feature_vars:
-        var_data = ds[var]
-        if 'year_ts' in var_data.dims and 'month_ts' in var_data.dims:
-            var_data = var_data.stack(time=("year_ts", "month_ts"))
-            var_data = var_data.transpose("time", "lat_bin", "lon_bin")
-        elif 'time' in var_data.dims:
-            var_data = var_data.transpose("time", "lat_bin", "lon_bin")
-        else:
-            raise ValueError(f"Unexpected time dimensions in variable {var}")
-        feature_arrays.append(var_data.values)
-
-    data = np.stack(feature_arrays, axis=-1)  # shape (T, H, W, C)
-    print(f"Loaded IMPROVE data shape: {data.shape}")
+    file = "./CoDiCast/data/encodings.npy"
+    data = np.load(file)
+    # Reshape from (120, 1, 64) to (120, 64, 1)
+    data = np.reshape(data, (120, 64, 1))
+    print("IMPROVE encodings shape: ", data.shape)
     return data
 
-
 def load_MODIS():
-    file = "../../data/AOD_Dark_Target_Deep_Blue_Mean_Mean.npy"
+    file = "./data/AOD_Dark_Target_Deep_Blue_Mean_Mean.npy"
     data = np.load(file)
     print(f"Loaded MODIS data shape: {data.shape}")
     return data
@@ -62,7 +44,7 @@ def load_MODIS():
 
 def get_dataloaders(batch_size=128, shuffle=True, split=0.8):
     modis = load_MODIS()
-    # improve = load_IMPROVE()
+    improve = load_IMPROVE()
 
     # Reshape MODIS to match (T, H, W, 1) if needed
     if modis.ndim == 3:
@@ -81,4 +63,4 @@ def get_dataloaders(batch_size=128, shuffle=True, split=0.8):
     # train_dataset = CustomDataset(modis, train_indices, batch_size=batch_size)
     # val_dataset = CustomDataset(modis, val_indices, batch_size=batch_size)
 
-    return modis[train_indices], modis[val_indices]
+    return modis[train_indices], modis[val_indices], improve[train_indices], improve[val_indices]
