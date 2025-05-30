@@ -35,6 +35,14 @@ def load_IMPROVE():
     print("IMPROVE encodings shape: ", data.shape)
     return data
 
+def load_IMPACT():
+    file = "./data/MachineLearning_2010_2019_v7.nc"
+    data = xr.open_dataset(file)
+    # Reshape from (120, 1, 64) to (120, 64, 1)
+    data = np.reshape(data, (120, 64, 1))
+    print("IMPROVE encodings shape: ", data.shape)
+    return data
+
 def load_MODIS():
     file = "./data/AOD_Dark_Target_Deep_Blue_Mean_Mean.npy"
     data = np.load(file)
@@ -43,8 +51,8 @@ def load_MODIS():
 
 
 def get_dataloaders(batch_size=128, shuffle=True, split=0.8):
-    modis = load_MODIS()
-    improve = load_IMPROVE()
+    modis = load_MODIS()[:60]
+    improve = load_IMPROVE()[:60]
 
     # Reshape MODIS to match (T, H, W, 1) if needed
     if modis.ndim == 3:
@@ -59,8 +67,5 @@ def get_dataloaders(batch_size=128, shuffle=True, split=0.8):
     split_idx = int(split * n_samples)
     train_indices = indices[:split_idx]
     val_indices = indices[split_idx:]
-
-    # train_dataset = CustomDataset(modis, train_indices, batch_size=batch_size)
-    # val_dataset = CustomDataset(modis, val_indices, batch_size=batch_size)
 
     return modis[train_indices], modis[val_indices], improve[train_indices], improve[val_indices]
